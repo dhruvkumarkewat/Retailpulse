@@ -316,36 +316,59 @@ page = st.sidebar.radio("Navigation", NAV_SECTIONS, label_visibility="collapsed"
 st.sidebar.markdown("<hr style='border-color: rgba(255,255,255,0.06); margin: 14px 0;'>", unsafe_allow_html=True)
 st.sidebar.markdown("<p style='font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 6px;'>Global Filter Scope</p>", unsafe_allow_html=True)
 
-# Date Filter
+# Date Filter bounds
 min_dt = df_raw['Order Date'].min().date()
 max_dt = df_raw['Order Date'].max().date()
-selected_dates = st.sidebar.date_input("Date Range", value=(min_dt, max_dt), min_value=min_dt, max_value=max_dt)
 
-# Dropdowns
-list_countries = ["All"] + sorted(df_raw['Country'].dropna().unique().tolist())
-filter_country = st.sidebar.selectbox("Market / Country", list_countries, index=0)
+# Reset button in sidebar
+if st.sidebar.button("🔄 Reset All Filters", use_container_width=True):
+    st.session_state["sel_country"] = "All"
+    st.session_state["sel_cat"] = "All"
+    st.session_state["sel_tier"] = "All"
+    st.session_state["sel_search"] = ""
+    st.session_state["sel_dates"] = (min_dt, max_dt)
+    st.rerun()
 
-list_categories = ["All"] + sorted(df_raw['Product Category'].dropna().unique().tolist())
-filter_cat = st.sidebar.selectbox("Product Category", list_categories, index=0)
+default_dates = st.session_state.get("sel_dates", (min_dt, max_dt))
+selected_dates = st.sidebar.date_input("Date Range", value=default_dates, min_value=min_dt, max_value=max_dt, key="sel_dates")
 
-list_tiers = ["All"] + sorted(df_raw['Order Value Tier'].dropna().unique().tolist())
-filter_tier = st.sidebar.selectbox("Order Value Tier", list_tiers, index=0)
-
-# Search
-filter_search = st.sidebar.text_input("Global Search", placeholder="Invoice, Product, Country...")
-
-# Filter Execution
-filtered_df = df_raw.copy()
+# 1. Base date slice
+df_scoped = df_raw.copy()
 if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
     s_date, e_date = selected_dates
-    filtered_df = filtered_df[(filtered_df['Order Date'].dt.date >= s_date) & (filtered_df['Order Date'].dt.date <= e_date)]
+    df_scoped = df_scoped[(df_scoped['Order Date'].dt.date >= s_date) & (df_scoped['Order Date'].dt.date <= e_date)]
 
+# 2. Country dropdown
+list_countries = ["All"] + sorted(df_scoped['Country'].dropna().unique().tolist())
+if "sel_country" not in st.session_state or st.session_state["sel_country"] not in list_countries:
+    st.session_state["sel_country"] = "All"
+filter_country = st.sidebar.selectbox("Market / Country", list_countries, key="sel_country")
+
+# 3. Dynamic Categories based on selected Country (Cascading Filter)
+df_for_cat = df_scoped.copy()
 if filter_country != "All":
-    filtered_df = filtered_df[filtered_df['Country'] == filter_country]
+    df_for_cat = df_for_cat[df_for_cat['Country'] == filter_country]
 
+avail_categories = ["All"] + sorted(df_for_cat['Product Category'].dropna().unique().tolist())
+if "sel_cat" not in st.session_state or st.session_state["sel_cat"] not in avail_categories:
+    st.session_state["sel_cat"] = "All"
+filter_cat = st.sidebar.selectbox("Product Category", avail_categories, key="sel_cat")
+
+# 4. Dynamic Tiers based on selected Country & Category (Cascading Filter)
+df_for_tier = df_for_cat.copy()
 if filter_cat != "All":
-    filtered_df = filtered_df[filtered_df['Product Category'] == filter_cat]
+    df_for_tier = df_for_tier[df_for_tier['Product Category'] == filter_cat]
 
+avail_tiers = ["All"] + sorted(df_for_tier['Order Value Tier'].dropna().unique().tolist())
+if "sel_tier" not in st.session_state or st.session_state["sel_tier"] not in avail_tiers:
+    st.session_state["sel_tier"] = "All"
+filter_tier = st.sidebar.selectbox("Order Value Tier", avail_tiers, key="sel_tier")
+
+# 5. Search
+filter_search = st.sidebar.text_input("Global Search", placeholder="Invoice, Product, Country...", key="sel_search")
+
+# 6. Apply final tier and search filters
+filtered_df = df_for_tier.copy()
 if filter_tier != "All":
     filtered_df = filtered_df[filtered_df['Order Value Tier'] == filter_tier]
 
@@ -403,7 +426,24 @@ def render_kpi(label, value, subtext=""):
     """, unsafe_allow_html=True)
 
 if len(filtered_df) == 0:
-    st.warning("No records match the active filter criteria. Please broaden your selection.")
+    st.markdown("""
+    <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 28px; text-align: center; margin-top: 24px;">
+        <div style="font-size: 2.2rem; margin-bottom: 8px;">🔍</div>
+        <h3 style="color: #f1f5f9; font-size: 1.25rem; font-weight: 700; margin-bottom: 8px;">No Transactions Match Current Filter Scope</h3>
+        <p style="color: #94a3b8; font-size: 0.88rem; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.5;">
+            No transactions were found matching your combined filter criteria. Try clearing search keywords or clicking the button below to restore all records.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    col_a, col_b, col_c = st.columns([1, 2, 1])
+    with col_b:
+        if st.button("🔄 Reset All Filters & View Full Dataset (3,805 rows)", use_container_width=True, type="primary"):
+            st.session_state["sel_country"] = "All"
+            st.session_state["sel_cat"] = "All"
+            st.session_state["sel_tier"] = "All"
+            st.session_state["sel_search"] = ""
+            st.session_state["sel_dates"] = (min_dt, max_dt)
+            st.rerun()
     st.stop()
 
 
