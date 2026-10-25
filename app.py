@@ -261,6 +261,7 @@ def load_data():
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
     df['Unit Price'] = pd.to_numeric(df['Unit Price'], errors='coerce').fillna(0)
     df['Recency Days'] = pd.to_numeric(df['Recency Days'], errors='coerce').fillna(0)
+    df['Invoice No'] = df['Invoice No'].apply(lambda x: str(int(x)) if pd.notna(x) and str(x).replace('.0','').isdigit() else (str(x) if pd.notna(x) else ""))
 
     if 'Country' not in df.columns: df['Country'] = 'United Kingdom'
     if 'Region' not in df.columns: df['Region'] = 'Europe'
@@ -716,9 +717,12 @@ elif page == "🎯 Customer Segmentation":
         tier=('Order Value Tier', 'first')
     ).reset_index()
 
-    rfm_tab['r_score'] = pd.qcut(rfm_tab['recency'], q=5, labels=[5, 4, 3, 2, 1], duplicates='drop').astype(int)
-    rfm_tab['f_score'] = pd.qcut(rfm_tab['frequency'].rank(method='first'), q=5, labels=[1, 2, 3, 4, 5]).astype(int)
-    rfm_tab['m_score'] = pd.qcut(rfm_tab['monetary'], q=5, labels=[1, 2, 3, 4, 5], duplicates='drop').astype(int)
+    r_pct = rfm_tab['recency'].rank(pct=True, method='first', ascending=False)
+    rfm_tab['r_score'] = np.ceil(r_pct * 5).clip(1, 5).astype(int)
+    f_pct = rfm_tab['frequency'].rank(pct=True, method='first', ascending=True)
+    rfm_tab['f_score'] = np.ceil(f_pct * 5).clip(1, 5).astype(int)
+    m_pct = rfm_tab['monetary'].rank(pct=True, method='first', ascending=True)
+    rfm_tab['m_score'] = np.ceil(m_pct * 5).clip(1, 5).astype(int)
     rfm_tab['rfm'] = rfm_tab['r_score'] + rfm_tab['f_score'] + rfm_tab['m_score']
 
     def assign_segment(r, f, m):
@@ -1065,6 +1069,26 @@ elif page == "🔮 Demand Forecasting":
             "Error %": (np.abs((test_y - preds_hold)/test_y) * 100).round(1)
         })
         st.dataframe(val_summary, use_container_width=True, hide_index=True)
+    else:
+        st.info(f"Historical time series contains {len(y_raw)} monthly period{'s' if len(y_raw) > 1 else ''}. Full statistical Holt linear trend projection and 3-month holdout backtesting require at least 6 monthly periods. Displaying available monthly cadence and baseline run-rate below.")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: render_kpi("Recorded Periods", f"{len(y_raw)} Months", "in active filter scope")
+        with c2: render_kpi("Total Realized", fmt_money(float(y_raw.sum())), "historical revenue")
+        with c3: render_kpi("Monthly Run-Rate", fmt_money(float(np.mean(y_raw))), "mean revenue / month")
+        with c4: render_kpi("Projected Run-Rate", fmt_money(float(np.mean(y_raw))), f"baseline next {horizon_choice} months")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        fig_short = px.bar(
+            m_series, x='Year Month', y='Revenue',
+            title=f"Monthly Transaction Cadence ({len(y_raw)} Recorded Period{'s' if len(y_raw) > 1 else ''})",
+            color_discrete_sequence=['#2563eb']
+        )
+        fig_short.update_layout(**PLOTLY_THEME, height=360)
+        st.plotly_chart(fig_short, use_container_width=True)
+
+        st.markdown("#### Monthly Transaction Ledger")
+        st.dataframe(m_series, use_container_width=True, hide_index=True)
 
 
 # ==============================================================================
@@ -1087,12 +1111,14 @@ elif page == "📑 Reports & Export":
             <p style="font-size: 0.85rem; color: #94a3b8; line-height: 1.5;">Consolidated KPI summary, revenue, operating profit, orders, and units sold.</p>
         </div>
         """, unsafe_allow_html=True)
+        tot_rev_m = filtered_df['Revenue'].sum()
+        margin_pct_str = f"{(filtered_df['Estimated Profit'].sum()/tot_rev_m)*100:.2f}%" if tot_rev_m > 0 else "0.00%"
         exec_df = pd.DataFrame([{
-            "Metric": "Gross Revenue", "Value": fmt_money(filtered_df['Revenue'].sum())
+            "Metric": "Gross Revenue", "Value": fmt_money(tot_rev_m)
         }, {
             "Metric": "Net Profit", "Value": fmt_money(filtered_df['Estimated Profit'].sum())
         }, {
-            "Metric": "Margin %", "Value": f"{(filtered_df['Estimated Profit'].sum()/filtered_df['Revenue'].sum())*100:.2f}%"
+            "Metric": "Margin %", "Value": margin_pct_str
         }, {
             "Metric": "Total Orders", "Value": len(filtered_df)
         }, {
