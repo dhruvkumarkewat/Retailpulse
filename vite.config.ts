@@ -19,6 +19,9 @@ export default defineConfig(async ({ mode }) => {
 
   return {
     plugins,
+    build: {
+      outDir: 'dist',
+    },
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     define: processEnvDefines,
   };
